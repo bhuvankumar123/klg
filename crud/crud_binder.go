@@ -11,14 +11,14 @@ type Binder struct {
 }
 
 func (b *Binder) Bind(ht *http.Transport, opts ...http.HandlerOption) {
-	// Post Call
+	// Post Call to create log
 	ht.POST(
 		"/v1.0/logs",
 		NewCreateHandler(b.service),
 		append(opts, NewCreateHandlerOption()...)...,
 	)
 
-	// Get Call to
+	// Get Call to fetch
 	ht.GET(
 		"/v1.0/logs/:id",
 		NewGetHandler(b.service),
@@ -30,6 +30,12 @@ func (b *Binder) Bind(ht *http.Transport, opts ...http.HandlerOption) {
 		"/v1.0/logs",
 		NewListHandler(b.service),
 		append(opts, NewListHandlerOption()...)...,
+	)
+
+	ht.DELETE(
+		"/v1.0/logs/:id",
+		NewDeleteHandler(b.service),
+		append(opts, NewDeleteHandlerOption()...)...,
 	)
 }
 

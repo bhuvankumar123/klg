@@ -36,6 +36,11 @@ func createDecoder(
 		return nil, errors.Wrap(errBadRequest, "level and message are required")
 	}
 
+	// Validate log level
+	if err := ValidateLogLevel(request.Level); err != nil {
+		return nil, err
+	}
+
 	return request, nil
 }
 
@@ -140,9 +145,22 @@ func listDecoder(
 		filter["message"] = message
 	}
 
+	// Add time range filters if present
+	if starttime := query.Get("starttime"); starttime != "" {
+		filter["starttime"] = starttime
+	}
+
+	if endtime := query.Get("endtime"); endtime != "" {
+		filter["endtime"] = endtime
+	}
+
+	if recent := query.Get("recent"); recent != "" {
+		filter["recent"] = recent
+	}
+
 	// Add metadata filters if present
 	for key, values := range query {
-		if key != "level" && key != "message" {
+		if key != "level" && key != "message" && key != "starttime" && key != "endtime" {
 			filter["metadata."+key] = values[0]
 		}
 	}
@@ -170,6 +188,63 @@ func NewListHandlerOption() []http.HandlerOption {
 		http.HandlerWithDecoder(listDecoder),
 		http.HandlerWithEncoder(http.NewDefaultJSONEncoder()),
 		http.HandlerWithErrorEncoder(errEncoder),
+	}
+}
+
+func NewDeleteHandler(service Service) http.Handler {
+	return http.Handler(deleteEndpoint(service))
+}
+
+func NewDeleteHandlerOption() []http.HandlerOption {
+	return []http.HandlerOption{
+		http.HandlerWithDecoder(deleteDecoder),
+		http.HandlerWithEncoder(http.NewDefaultJSONEncoder()),
+		http.HandlerWithErrorEncoder(errEncoder),
+	}
+}
+
+func deleteDecoder(
+	ctx context.Context, req *net_http.Request,
+) (interface{}, error) {
+	filter := make(map[string]interface{})
+
+	// Get query parameters
+	query := req.URL.Query()
+
+	// Add level filter if present
+	if id := query.Get("id"); id != "" {
+		filter["id"] = id
+	}
+
+	if before := query.Get("before"); before != "" {
+		filter["before"] = before
+	}
+
+	if filter["id"] == "" || filter["before"] == "" {
+		return nil, errors.Wrap(errBadRequest, "id and before missing from url params")
+	}
+
+	if filter["id"] != "" && filter["before"] != "" {
+		return nil, errors.Wrap(errBadRequest, "only one of id or before can be provided")
+	}
+
+	return filter, nil
+}
+
+func deleteEndpoint(svc Service) endpoint.Endpoint {
+	return func(ctx context.Context, req interface{}) (res interface{}, err error) {
+		filter, ok := req.(map[string]interface{})
+		if !ok {
+			return nil, errors.Wrap(errInternalServer, "failed to cast filter")
+		}
+		err = svc.Delete(ctx, filter)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"status":  "success",
+			"message": "Log entries deleted successfully",
+		}, nil
 	}
 }
 

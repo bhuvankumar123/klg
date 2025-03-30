@@ -2,6 +2,7 @@ package crud
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/pkg/errors"
@@ -74,17 +75,39 @@ func (s *mongoService) List(ctx context.Context, filter map[string]interface{}) 
 
 	// Convert filter to MongoDB query
 	query := bson.M{}
+	timeRange := bson.M{}
+	limit := int64(50) // default limit
+
 	for k, v := range filter {
 		if k == "level" {
 			query["level"] = v
 		} else if k == "message" {
-			query["message"] = v
+			// Use regex for case-insensitive message matching
+			query["message"] = bson.M{"$regex": v, "$options": "i"}
+		} else if k == "starttime" {
+			timeRange["$gte"] = v
+		} else if k == "endtime" {
+			timeRange["$lte"] = v
+		} else if k == "recent" {
+			if count, ok := v.(float64); ok {
+				limit = int64(count)
+			}
 		} else {
 			query["metadata."+k] = v
 		}
 	}
 
-	cursor, err := collection.Find(ctx, query)
+	// Add time range if either start or end time is present
+	if len(timeRange) > 0 {
+		query["timestamp"] = timeRange
+	}
+
+	// Set up options for sorting by timestamp in descending order and limit
+	opts := options.Find().
+		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
+		SetLimit(limit)
+
+	cursor, err := collection.Find(ctx, query, opts)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to find log entries")
 	}
@@ -100,4 +123,36 @@ func (s *mongoService) List(ctx context.Context, filter map[string]interface{}) 
 
 func (s *mongoService) Close(ctx context.Context) error {
 	return s.client.Disconnect(ctx)
+}
+
+func (s *mongoService) Delete(ctx context.Context, filter map[string]interface{}) error {
+	collection := s.client.Database(s.database).Collection("logs")
+
+	// If ID is present, delete specific document
+	if id, ok := filter["id"].(string); ok && id != "" {
+		objectID, err := primitive.ObjectIDFromHex(id)
+		if err != nil {
+			return errors.Wrap(errBadRequest, "invalid log ID format")
+		}
+		_, err = collection.DeleteOne(ctx, bson.M{"_id": objectID})
+		if err != nil {
+			return errors.Wrap(err, "failed to delete log entry")
+		}
+		return nil
+	}
+
+	// If before timestamp is present, delete all documents before that time
+	if beforeTime, ok := filter["before"].(string); ok && beforeTime != "" {
+		timestamp, err := strconv.ParseInt(beforeTime, 10, 64)
+		if err != nil {
+			return errors.Wrap(errBadRequest, "invalid epoch timestamp format")
+		}
+		_, err = collection.DeleteMany(ctx, bson.M{"timestamp": bson.M{"$lt": timestamp}})
+		if err != nil {
+			return errors.Wrap(err, "failed to delete log entries")
+		}
+		return nil
+	}
+
+	return errors.Wrap(errBadRequest, "either id or before timestamp must be provided")
 }
