@@ -1,0 +1,29 @@
+{{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion -}}
+apiVersion: networking.k8s.io/v1  
+{{- else if semverCompare ">=1.14-0" .Capabilities.KubeVersion.GitVersion -}}
+apiVersion: networking.k8s.io/v1beta1
+{{- else -}}
+apiVersion: extensions/v1beta1
+{{- end }}
+kind: Ingress
+metadata:
+  name: "faker"
+  annotations:
+    ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  rules:
+    - host: "faker.dev.infra"
+      http:
+        paths:
+          - path: "/"
+            pathType: Prefix
+            backend:
+              {{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
+              service:                
+                name: faker
+                port:
+                  number: 12003
+              {{- else }}
+              serviceName: faker
+              servicePort: 12003
+              {{- end }}

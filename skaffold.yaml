@@ -1,0 +1,42 @@
+apiVersion: skaffold/v3
+kind: Config
+metadata:
+  name: app
+build:
+  tagPolicy:
+    sha256: {}
+  artifacts:
+    - image: faker
+      context: .
+      docker:
+        dockerfile: build/faker/Dockerfile
+    - image: gostarter
+      custom:
+        buildCommand: make build
+        dependencies:
+          paths:
+            - cmd/**
+            - scripts/**
+            - ./*.go
+            - ./*/*.go
+            - ./*/*/*.go
+            - Dockerfile
+          ignore:
+            - bin/**
+            - .git/**
+            - .github/**
+            - ./*.md
+
+deploy:
+  helm:
+    releases:
+      - name: faker
+        chartPath: build/helm/faker
+        setValueTemplates:
+          image: faker
+
+      - name: app
+        chartPath: build/helm/app
+        setValueTemplates:
+          image.repository: "{{.IMAGE_REPO_gostarter}}"
+          image.tag: "{{.IMAGE_TAG_gostarter}}"

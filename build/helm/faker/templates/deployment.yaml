@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: faker 
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: faker
+      env: local
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: faker
+        env: local
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: faker 
+        image: {{ .Values.image }}
+        ports:
+        - containerPort: 12003
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 12003
+          initialDelaySeconds: 10

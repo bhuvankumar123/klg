@@ -1,0 +1,273 @@
+name: "gostarter [Build]"
+on:
+  push:
+  pull_request:
+  release:
+    types:
+      - created
+      - published
+      - released
+      - edited
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      # checkout code
+      - uses: actions/checkout@v3
+      # setup Go
+      - uses: actions/setup-go@v3
+        with:
+          go-version: 1.19
+      # install make
+      - run: sudo apt-get install -y make
+      - run: |
+          make gobuild
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: build-test
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.PLATFORM_SLACK_WEBHOOK_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION}}
+      ECR_URL: "012629307706.dkr.ecr.us-east-1.amazonaws.com"
+      GITHUB_USER: ${{ secrets.PLATFORM_BOT_GITHUB_USER }}
+      GITHUB_USER_TOKEN: ${{ secrets.PLATFORM_BOT_GITHUB_TOKEN }}
+      POSTMAN_COLLECTION_ID: 440572-c482cbdc-b40a-4ee0-96fd-ea90dd1c3298
+      POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+      SERVICE_NAME: "gostarter"
+
+    steps:
+      # checkout
+      - uses: actions/checkout@v3
+
+      # ------------------------------------------------------------
+      # > Setup Environment
+      # ------------------------------------------------------------
+
+      # Set Go for Builds
+      - uses: actions/setup-go@v3
+        with:
+          go-version: 1.19
+
+      # Install Packages
+      - run: sudo apt-get install -y make curl jq
+
+      # Set up Kubernetes Cluster using Kind
+      - name: Create k8s Kind Cluster
+        uses: helm/kind-action@v1.4.0
+        with:
+          config: build/cluster.yaml
+
+      # Set up Helm Binary in the Kind Cluster
+      - name: Set up Helm Binary
+        id: setup-helm
+        uses: azure/setup-helm@v1
+        with:
+          version: v3.9.0
+
+      # Update Helm Repository
+      # - name: Update helm Repository
+      #   id: update-helm-repo
+      #   run: |
+      #     helm repo add traefik https://helm.traefik.io/traefik
+      #     helm repo update
+
+      # Setup Ingress Controller
+      - name: Setup Ingress Controller
+        id: setup-ingress
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+          kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=90s
+
+      # Install Node & NPM
+      - name: Install Node & NPM
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          check-latest: true
+
+      # Install `newman` to run Postman Tests
+      - name: set up newman
+        run: |
+          sudo npm install -g newman
+          sudo npm install -g newman-reporter-htmlextra
+          mkdir -p tres
+
+      # ------------------------------------------------------------
+      # > Setup Credentials/Secrets
+      # ------------------------------------------------------------
+
+      # Create AWS Auth as Secret KV Pair
+      - name: create aws secret
+        env:
+          KEY: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: kubectl create secret generic aws-secret --from-literal=AWS_ACCESS_KEY_ID=$KEY --from-literal=AWS_SECRET_ACCESS_KEY=$SECRET
+
+      # Create AWS ECR Login and Patch `default` Namespace with it
+      - name: setup docker registry
+        id: setup-docker-registry
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          aws_pass="$(aws ecr get-login-password --region=$AWS_DEFAULT_REGION)"
+          echo $aws_pass | docker login --username AWS --password-stdin $ECR_URL
+          aws_regn="$(echo $AWS_DEFAULT_REGION)";
+          kubectl create secret docker-registry aws-ecr-auth \
+              --docker-server="${ECR_URL}" \
+              --docker-username="AWS" \
+              --docker-password="${aws_pass}"
+          kubectl patch serviceaccount default -p \
+            "{\"imagePullSecrets\": [{\"name\": \"aws-ecr-auth\"}]}"
+          docker system df
+          docker system prune -a -f
+
+      # ------------------------------------------------------------
+      # > Print Environment Details
+      # ------------------------------------------------------------
+
+      - name: kubernetes-status
+        run: |
+          echo "Kubernetes"
+          echo "-------------------------------------------"
+          kubectl get po -A
+          echo "-------------------------------------------"
+          kubectl get events -A
+          echo "-------------------------------------------"
+          echo "Helm status"
+          echo "-------------------------------------------"
+          helm list
+
+      # ------------------------------------------------------------
+      # > Extract Tag for Build
+      # ------------------------------------------------------------
+
+      - name: Extract Tag from Github Events
+        id: extract_tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          TAG=${{ github.event.release.tag_name }}
+          tag="PR_${GITHUB_ACTOR}_${GITHUB_HEAD_REF}"
+          if [ -z "$GITHUB_HEAD_REF" ]; then
+              tag=latest
+              if [ -n "$TAG" ]; then
+                  tag=$TAG
+              fi
+          else
+              tag="PR_${GITHUB_ACTOR}_${GITHUB_HEAD_REF}";
+          fi
+          echo "BUILD_VERSION=$tag" >> $GITHUB_ENV
+
+      # ------------------------------------------------------------
+      # > Run Skaffold Pipeline & Integration Tests
+      # ------------------------------------------------------------
+
+      # Install Skaffold
+      - name: Install Skaffold
+        run: |
+          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64 
+          sudo install skaffold /usr/local/bin/
+
+      # Skaffold Run
+      - name: run skaffold pipeline
+        run: |
+          export BUILD_VERSION=${{ env.BUILD_VERSION }}
+          skaffold config set kind-disable-load true
+          skaffold run --default-repo ${ECR_URL} --status-check=false
+          sleep 120
+
+      # Add entry in /etc/hosts file to connect with Ingress
+      - name: add to etc hosts
+        run: |
+          sudo echo "127.0.0.1 go-starter.dev.infra" | sudo tee -a /etc/hosts
+          sudo echo "127.0.0.1 faker.dev.infra" | sudo tee -a /etc/hosts
+
+      # Print Kubernetes Details
+      - name: print-deployed-pod-details
+        run: |
+          echo "K8s Pods and Details -------------------------"
+          kubectl get po -n "default"
+          echo "----------------------------------------------"
+          kubectl get events -n default
+          echo "----------------------------------------------"
+          kubectl get service -n default
+          echo "----------------------------------------------"
+          kubectl get ingress -n default
+          echo "K8s Pods and Details -------------------------"
+
+      # Wait for Infra to come up
+      - name: wait-for-liveliness
+        run: |
+          ./scripts/wait_live.sh faker.dev.infra /ping
+          ./scripts/wait_live.sh go-starter.dev.infra /monitor
+
+      # Run Newman Tests Here
+      - name: run postman collection
+        run: |
+          newman run "https://api.getpostman.com/collections/$POSTMAN_COLLECTION_ID?apikey=$POSTMAN_API_KEY" --verbose
+
+      - uses: act10ns/slack@v1
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+          channel: "#platform-github-actions"
+        if: always()
+  ci:
+    needs: integration-tests
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      ECR_URL: "012629307706.dkr.ecr.us-east-1.amazonaws.com"
+      GIT_HUB_USER: ${{ secrets.PLATFORM_BOT_GITHUB_USER }}
+      GIT_HUB_TOKEN: ${{ secrets.PLATFORM_BOT_GITHUB_TOKEN }}
+      GCR_URL: ${{ secrets.GCR_URL }}
+      GCR_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v3
+      # Extract Tag
+      - name: Extract Tag from Github Events
+        id: extract_tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          TAG=${{ github.event.release.tag_name }}
+          tag="PR_${GITHUB_ACTOR}_${GITHUB_HEAD_REF}"
+          if [ -z "$GITHUB_HEAD_REF" ]; then
+              tag=latest
+              if [ -n "$TAG" ]; then
+                  tag=$TAG
+              fi
+          else
+              tag="PR_${GITHUB_ACTOR}_${GITHUB_HEAD_REF}";
+          fi
+          echo "BUILD_VERSION=$tag" >> $GITHUB_ENV
+
+      # Setup AWS Credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_DEFAULT_REGION}}
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+      # Setup GCloud Auth
+      - uses: google-github-actions/setup-gcloud@v0
+        with:
+          service_account_key: ${{ secrets.GCR_SERVICE_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          export_default_credentials: true
+
+      # Use Make to Build and Docker Push
+      - run: sudo apt-get install -y make
+      - run: |
+          make build
+      # TODO: add GCR Push

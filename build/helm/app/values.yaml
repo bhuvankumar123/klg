@@ -1,0 +1,87 @@
+# Default values for app.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+config:
+  service: app
+
+replicaCount: 1
+
+image:
+  repository: app
+  pullPolicy: Always
+  tag: "latest"
+
+nameOverride: "app"
+fullnameOverride: "app"
+
+# Service Port
+service:
+  type: ClusterIP
+  containerPort: 6060
+  port: 80
+
+ingress:
+  enabled: true
+  annotations: []
+  hosts:
+    - host: go-starter.dev.infra
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            serviceName: app
+            servicePort: 80
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+# We usually recommend not to specify default resources and to leave this as a conscious
+# choice for the user. This also increases chances charts run on environments with little
+# resources, such as Minikube. If you do want to specify resources, uncomment the following
+# lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+# limits:
+#   cpu: 100m
+#   memory: 128Mi
+# requests:
+#   cpu: 100m
+#   memory: 128Mi
+resources: {}
+
+imagePullSecrets:
+  - name: "aws-ecr-auth"
+
+# ServiceAccount, if required
+serviceAccount:
+  create: false
+  annotations: {}
+  name: ""
+
+# Additional Annotation
+podAnnotations: {}
+
+# Custom Sercurity Context like `fsGroup: 2000`
+podSecurityContext: {}
+
+# Additional Security Context if Required
+# capabilities:
+#   drop:
+#   - ALL
+# readOnlyRootFilesystem: true
+# runAsNonRoot: true
+# runAsUser: 1000
+securityContext: {}
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

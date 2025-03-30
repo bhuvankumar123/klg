@@ -1,0 +1,46 @@
+# error, info, debug
+server:
+  host: "0.0.0.0"
+  port: "12003"
+
+mode: "debug"
+
+handlers:
+  - path: "/ping"
+    methods:
+      - "GET"
+    must_params:
+    must_kv_params:
+    response:
+      status_code: 200
+      source: "text"
+      headers:
+        "content-type": "text/plain"
+      args:
+        content: "pong"
+
+  - path: "/faker/ping"
+    methods:
+      - "GET"
+    must_params:
+    must_kv_params:
+    response:
+      status_code: 200
+      source: "text"
+      headers:
+        "content-type": "text/plain"
+      args:
+        content: "pong"
+
+  - path: "/json"
+    methods:
+      - "GET"
+    must_params:
+    must_kv_params:
+    response:
+      status_code: 200
+      source: "file"
+      headers:
+        "content-type": "application/json"
+      args:
+        filepath: "/faker/responses/1.json"
