@@ -3,74 +3,87 @@ package crud
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 var (
-	ErrNotFound = errors.New("value for key not found")
-	ErrEmptyKey = errors.New("validation of key failed, key can't be empty")
+	ErrNotFound = errors.New("log entry not found")
+	ErrEmptyKey = errors.New("validation failed, required fields missing")
 )
 
 type (
 	Service interface {
-		Create(cx context.Context, key string, value string) error
-		Get(cx context.Context, key string) (*KeyValue, error)
-		Delete(cx context.Context, key string) error
-		List(cx context.Context) (keys []string, err error)
+		Create(ctx context.Context, level string, message string, metadata map[string]interface{}) error
+		Get(ctx context.Context, id string) (*LogEntry, error)
+		List(ctx context.Context, filter map[string]interface{}) ([]LogEntry, error)
+		Close(ctx context.Context) error
 	}
 
-	//
-
-	KeyValue struct {
-		Key   string
-		Value string
+	LogEntry struct {
+		ID        string                 `bson:"_id,omitempty"`
+		Timestamp time.Time              `bson:"timestamp"`
+		Level     string                 `bson:"level"`
+		Message   string                 `bson:"message"`
+		Metadata  map[string]interface{} `bson:"metadata,omitempty"`
 	}
 
-	defaultCRUDService struct {
-		store map[string]*KeyValue
+	defaultService struct {
+		store map[string]*LogEntry
 	}
 )
 
-func NewKeyValue(key, value string) *KeyValue {
-	return &KeyValue{key, value}
+func NewLogEntry(level, message string, metadata map[string]interface{}) *LogEntry {
+	return &LogEntry{
+		Timestamp: time.Now(),
+		Level:     level,
+		Message:   message,
+		Metadata:  metadata,
+	}
 }
 
-func (dns *defaultCRUDService) Create(
-	cx context.Context, key, value string,
-) (err error) {
-	if key == "" {
+func (s *defaultService) Create(
+	ctx context.Context, level string, message string, metadata map[string]interface{},
+) error {
+	if level == "" || message == "" {
 		return ErrEmptyKey
 	}
 
-	dns.store[key] = NewKeyValue(key, value)
-	return err
+	entry := NewLogEntry(level, message, metadata)
+	s.store[entry.ID] = entry
+	return nil
 }
 
-func (dns *defaultCRUDService) Get(cx context.Context, key string) (*KeyValue, error) {
-	if _, ok := dns.store[key]; !ok {
-		return nil, ErrNotFound
+func (s *defaultService) Get(ctx context.Context, id string) (*LogEntry, error) {
+	if entry, ok := s.store[id]; ok {
+		return entry, nil
 	}
-	return dns.store[key], nil
+	return nil, ErrNotFound
 }
 
-func (dns *defaultCRUDService) Delete(cx context.Context, key string) (err error) {
-	delete(dns.store, key)
-	return err
-}
-
-func (dns *defaultCRUDService) List(cx context.Context) (keys []string, err error) {
-	keys = make([]string, 0)
-	for k := range dns.store {
-		keys = append(keys, k)
+func (s *defaultService) List(ctx context.Context, filter map[string]interface{}) ([]LogEntry, error) {
+	entries := make([]LogEntry, 0)
+	for _, entry := range s.store {
+		match := true
+		for k, v := range filter {
+			if entry.Metadata[k] != v {
+				match = false
+				break
+			}
+		}
+		if match {
+			entries = append(entries, *entry)
+		}
 	}
-	return keys, err
-
+	return entries, nil
 }
 
-func NewCrudService(samplekey, samplevalue string) (Service, error) {
-	dcs := &defaultCRUDService{
-		store: make(map[string]*KeyValue),
-	}
+func (s *defaultService) Close(ctx context.Context) error {
+	s.store = make(map[string]*LogEntry)
+	return nil
+}
 
-	dcs.store[samplekey] = NewKeyValue(samplekey, samplevalue)
-	return dcs, nil
+func NewService() (Service, error) {
+	return &defaultService{
+		store: make(map[string]*LogEntry),
+	}, nil
 }

@@ -73,6 +73,21 @@ var (
 			EnvVars: []string{"APP_CRUD_SAMPLEVALUE"},
 		},
 	}
+
+	mongoFlags = []cli.Flag{
+		&cli.StringFlag{
+			Name:    "mongo.uri",
+			Value:   "mongodb://localhost:27017",
+			Usage:   "MongoDB connection URI",
+			EnvVars: []string{"APP_MONGO_URI"},
+		},
+		&cli.StringFlag{
+			Name:    "mongo.database",
+			Value:   "logs",
+			Usage:   "MongoDB database name",
+			EnvVars: []string{"APP_MONGO_DATABASE"},
+		},
+	}
 )
 
 func flags() []cli.Flag {
@@ -81,5 +96,6 @@ func flags() []cli.Flag {
 	flags = append(flags, httpflags...)
 	flags = append(flags, proxyFlags...)
 	flags = append(flags, crudFlags...)
+	flags = append(flags, mongoFlags...)
 	return flags
 }

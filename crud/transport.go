@@ -2,7 +2,7 @@ package crud
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	net_http "net/http"
 
 	utils_err "github.com/bhuvankumar123/klg/utils/err"
@@ -13,65 +13,55 @@ import (
 
 var (
 	errBadRequest     = errors.New("bad request")
-	errInternalServer = errors.New("internal server verror")
+	errInternalServer = errors.New("internal server error")
 )
 
-// dto for create request, read from form data
-type createRequestData struct {
-	key   string
-	value string
+type createLogRequest struct {
+	Level    string                 `json:"level"`
+	Message  string                 `json:"message"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // decoder, reads the http request and gets the required
 // request property for the service
 func createDecoder(
-	cx context.Context, req *net_http.Request,
+	ctx context.Context, req *net_http.Request,
 ) (interface{}, error) {
-	err := req.ParseForm()
-	if err != nil {
-		return nil, errors.Wrap(
-			errBadRequest, "failed to parse form data: "+err.Error(),
-		)
+	var request createLogRequest
+	if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
+		return nil, errors.Wrap(errBadRequest, "failed to decode request")
 	}
 
-	crd := &createRequestData{
-		key:   req.Form.Get("key"),
-		value: req.Form.Get("value"),
+	if request.Level == "" || request.Message == "" {
+		return nil, errors.Wrap(errBadRequest, "level and message are required")
 	}
 
-	fmt.Println("Key:", crd.key, "value:", crd.value)
-
-	return crd, err
-}
-
-// we don't need any encoder, as `Create()` doesn't return any value
-// if there is no error, we should return 204
-func createNoContentEncoder(
-	cx context.Context,
-	rw net_http.ResponseWriter,
-	object interface{},
-) (err error) {
-	if object != nil {
-		// use the default encoder
-		return http.NewDefaultJSONEncoder()(cx, rw, object)
-	}
-
-	rw.WriteHeader(net_http.StatusNoContent)
-	return nil
+	return request, nil
 }
 
 // endpoint handles the call to service
 func createEndpoint(svc Service) endpoint.Endpoint {
-	return func(cx context.Context, req interface{}) (res interface{}, err error) {
-		rq, ok := req.(*createRequestData)
+	return func(ctx context.Context, req interface{}) (res interface{}, err error) {
+		rq, ok := req.(createLogRequest)
 		if !ok {
-			return nil, errors.Wrap(
-				errInternalServer, "failed to cast object",
-			)
+			return nil, errors.Wrap(errInternalServer, "failed to cast request")
 		}
 
-		err = svc.Create(cx, rq.key, rq.value)
-		return nil, err
+		err = svc.Create(ctx, rq.Level, rq.Message, rq.Metadata)
+		if err != nil {
+			return nil, err
+		}
+
+		// Return success response
+		return map[string]interface{}{
+			"status":  "success",
+			"message": "Log entry created successfully",
+			"data": map[string]interface{}{
+				"level":    rq.Level,
+				"message":  rq.Message,
+				"metadata": rq.Metadata,
+			},
+		}, nil
 	}
 }
 
@@ -82,66 +72,7 @@ func NewCreateHandler(service Service) http.Handler {
 func NewCreateHandlerOption() []http.HandlerOption {
 	return []http.HandlerOption{
 		http.HandlerWithDecoder(createDecoder),
-		http.HandlerWithEncoder(createNoContentEncoder),
-		http.HandlerWithErrorEncoder(errEncoder),
-	}
-}
-
-// same as get, delete has very similar handling of request and response.
-// only difference is we return 204 instead of any json data
-
-func deleteDecoder(
-	cx context.Context, req *net_http.Request,
-) (interface{}, error) {
-	var (
-		params = http.Parameters(req)
-		key    = params.ByName("key")
-	)
-
-	if key == "" {
-		return nil, errors.Wrap(
-			errBadRequest, "key missing from url params",
-		)
-	}
-
-	return key, nil
-}
-
-func deleteNoContentEncoder(
-	cx context.Context,
-	rw net_http.ResponseWriter,
-	object interface{},
-) (err error) {
-	if object != nil {
-		return http.NewDefaultJSONEncoder()(cx, rw, object)
-	}
-
-	rw.WriteHeader(net_http.StatusNoContent)
-	return nil
-}
-
-func deleteEndpoint(service Service) endpoint.Endpoint {
-	return func(cx context.Context, req interface{}) (res interface{}, err error) {
-		rq, ok := req.(string)
-		if !ok {
-			return nil, errors.Wrap(
-				errInternalServer, "failed to cast object",
-			)
-		}
-
-		err = service.Delete(cx, rq)
-		return nil, err
-	}
-}
-
-func NewDeleteHandler(service Service) http.Handler {
-	return http.Handler(deleteEndpoint(service))
-}
-
-func NewDeleteHandlerOption() []http.HandlerOption {
-	return []http.HandlerOption{
-		http.HandlerWithDecoder(deleteDecoder),
-		http.HandlerWithEncoder(deleteNoContentEncoder),
+		http.HandlerWithEncoder(http.NewDefaultJSONEncoder()),
 		http.HandlerWithErrorEncoder(errEncoder),
 	}
 }
@@ -149,35 +80,31 @@ func NewDeleteHandlerOption() []http.HandlerOption {
 // dto for get is simple string i.e. key to which we will return value
 
 func getDecoder(
-	cx context.Context, req *net_http.Request,
+	ctx context.Context, req *net_http.Request,
 ) (interface{}, error) {
 	var (
 		params = http.Parameters(req)
-		key    = params.ByName("key")
+		id     = params.ByName("id")
 	)
 
-	if key == "" {
-		return nil, errors.Wrap(
-			errBadRequest, "key missing from url params",
-		)
+	if id == "" {
+		return nil, errors.Wrap(errBadRequest, "id missing from url params")
 	}
 
-	return key, nil
+	return id, nil
 }
 
 // we will use default JSON Encoder
 // 	http.NewDefaultJSONEncoder()
 
 func getEndpoint(svc Service) endpoint.Endpoint {
-	return func(cx context.Context, req interface{}) (res interface{}, err error) {
-		rq, ok := req.(string)
+	return func(ctx context.Context, req interface{}) (res interface{}, err error) {
+		id, ok := req.(string)
 		if !ok {
-			return nil, errors.Wrap(
-				errInternalServer, "failed to cast object",
-			)
+			return nil, errors.Wrap(errInternalServer, "failed to cast request")
 		}
 
-		return svc.Get(cx, rq)
+		return svc.Get(ctx, id)
 	}
 }
 
@@ -195,9 +122,42 @@ func NewGetHandlerOption() []http.HandlerOption {
 
 // unlike any of the APIs that we have, this one doesn't take any input
 
+func listDecoder(
+	ctx context.Context, req *net_http.Request,
+) (interface{}, error) {
+	filter := make(map[string]interface{})
+
+	// Get query parameters
+	query := req.URL.Query()
+
+	// Add level filter if present
+	if level := query.Get("level"); level != "" {
+		filter["level"] = level
+	}
+
+	// Add message filter if present
+	if message := query.Get("message"); message != "" {
+		filter["message"] = message
+	}
+
+	// Add metadata filters if present
+	for key, values := range query {
+		if key != "level" && key != "message" {
+			filter["metadata."+key] = values[0]
+		}
+	}
+
+	return filter, nil
+}
+
 func listEndpoint(svc Service) endpoint.Endpoint {
-	return func(cx context.Context, req interface{}) (res interface{}, err error) {
-		return svc.List(cx)
+	return func(ctx context.Context, req interface{}) (res interface{}, err error) {
+		filter, ok := req.(map[string]interface{})
+		if !ok {
+			return nil, errors.Wrap(errInternalServer, "failed to cast filter")
+		}
+
+		return svc.List(ctx, filter)
 	}
 }
 
@@ -207,14 +167,14 @@ func NewListHandler(service Service) http.Handler {
 
 func NewListHandlerOption() []http.HandlerOption {
 	return []http.HandlerOption{
-		http.HandlerWithDecoder(http.NopRequestDecoder()),
+		http.HandlerWithDecoder(listDecoder),
 		http.HandlerWithEncoder(http.NewDefaultJSONEncoder()),
 		http.HandlerWithErrorEncoder(errEncoder),
 	}
 }
 
 func errorWriter(
-	cx context.Context, er *utils_err.Error, w net_http.ResponseWriter,
+	ctx context.Context, er *utils_err.Error, w net_http.ResponseWriter,
 ) {
 	bt, err := er.JSON()
 	if err != nil {
@@ -228,7 +188,7 @@ func errorWriter(
 }
 
 func errEncoder(
-	cx context.Context,
+	ctx context.Context,
 	err error,
 	w net_http.ResponseWriter,
 ) {
@@ -236,25 +196,25 @@ func errEncoder(
 	switch cause {
 	case errBadRequest:
 		errorWriter(
-			cx,
+			ctx,
 			utils_err.NewError(err, net_http.StatusBadRequest, "bad request"),
 			w,
 		)
 	case ErrNotFound:
 		errorWriter(
-			cx, utils_err.NewError(err, net_http.StatusNotFound, "not found"),
+			ctx, utils_err.NewError(err, net_http.StatusNotFound, "not found"),
 			w,
 		)
 	case ErrEmptyKey:
 		errorWriter(
-			cx, utils_err.NewError(err, net_http.StatusBadRequest, "Bad Request, key Empty"),
+			ctx, utils_err.NewError(err, net_http.StatusBadRequest, "Bad Request, required fields missing"),
 			w,
 		)
 	case errInternalServer:
 		fallthrough
 	default:
 		errorWriter(
-			cx,
+			ctx,
 			utils_err.NewError(err, net_http.StatusInternalServerError, "internal server error"),
 			w,
 		)

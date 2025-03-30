@@ -76,13 +76,14 @@ func beforeStart(cx *cli.Context) (ax *app.App, err error) {
 		return nil, errors.Wrap(err, "failed to create proxy binder")
 	}
 
-	cb, err := crud.NewHTTPBinder(
+	// Create log binder
+	mb, err := crud.NewHTTPBinder(
 		logger,
-		cx.String("crud.samplekey"),
-		cx.String("crud.samplevalue"),
+		cx.String("mongo.uri"),
+		cx.String("mongo.database"),
 	)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create crud binder")
+		return nil, errors.Wrap(err, "failed to create log binder")
 	}
 
 	ax, err = app.NewApp(
@@ -93,7 +94,7 @@ func beforeStart(cx *cli.Context) (ax *app.App, err error) {
 			cx.StringSlice("http.monitor"),
 		),
 		app.WithHTTPBinder(pb),
-		app.WithHTTPBinder(cb),
+		app.WithHTTPBinder(mb),
 	)
 	return
 }

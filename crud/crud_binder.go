@@ -11,28 +11,23 @@ type Binder struct {
 }
 
 func (b *Binder) Bind(ht *http.Transport, opts ...http.HandlerOption) {
-	// post call to create crud entry
-	// service.Create
+	// Post Call
 	ht.POST(
-		"/v1.0/crud",
+		"/v1.0/logs",
 		NewCreateHandler(b.service),
 		append(opts, NewCreateHandlerOption()...)...,
 	)
 
+	// Get Call to
 	ht.GET(
-		"/v1.0/crud/:key",
+		"/v1.0/logs/:id",
 		NewGetHandler(b.service),
 		append(opts, NewGetHandlerOption()...)...,
 	)
 
-	ht.DELETE(
-		"/v1.0/crud/:key",
-		NewDeleteHandler(b.service),
-		append(opts, NewDeleteHandlerOption()...)...,
-	)
-
+	// Get call
 	ht.GET(
-		"/v1.0/crud",
+		"/v1.0/logs",
 		NewListHandler(b.service),
 		append(opts, NewListHandlerOption()...)...,
 	)
@@ -40,13 +35,11 @@ func (b *Binder) Bind(ht *http.Transport, opts ...http.HandlerOption) {
 
 func (b *Binder) Service() Service { return b.service }
 
-func NewHTTPBinder(logger log.Logger, sampleKey, sampleValue string) (*Binder, error) {
-	ss, err := NewCrudService(
-		sampleKey, sampleValue,
-	)
+func NewHTTPBinder(logger log.Logger, mongoURI, database string) (*Binder, error) {
+	service, err := NewMongoService(mongoURI, database)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to initialise CRUD service")
+		return nil, errors.Wrap(err, "failed to initialize MongoDB service")
 	}
 
-	return &Binder{ss}, err
+	return &Binder{service}, nil
 }
