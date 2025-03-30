@@ -73,52 +73,66 @@ func (s *mongoService) Get(ctx context.Context, id string) (*LogEntry, error) {
 func (s *mongoService) List(ctx context.Context, filter map[string]interface{}) ([]LogEntry, error) {
 	collection := s.client.Database(s.database).Collection("logs")
 
-	// Convert filter to MongoDB query
+	// Build query
 	query := bson.M{}
-	timeRange := bson.M{}
-	limit := int64(50) // default limit
 
-	for k, v := range filter {
-		if k == "level" {
-			query["level"] = v
-		} else if k == "message" {
-			// Use regex for case-insensitive message matching
-			query["message"] = bson.M{"$regex": v, "$options": "i"}
-		} else if k == "starttime" {
-			timeRange["$gte"] = v
-		} else if k == "endtime" {
-			timeRange["$lte"] = v
-		} else if k == "recent" {
-			if count, ok := v.(float64); ok {
-				limit = int64(count)
-			}
+	// Add level filter if present
+	if level, ok := filter["level"].(string); ok && level != "" {
+		query["level"] = level
+	}
+
+	// Add message filter if present
+	if message, ok := filter["message"].(string); ok && message != "" {
+		query["message"] = bson.M{"$regex": message, "$options": "i"}
+	}
+
+	// Add time range filters if present
+	if startTime, ok := filter["starttime"].(string); ok && startTime != "" {
+		startTimestamp, err := strconv.ParseInt(startTime, 10, 64)
+		if err != nil {
+			return nil, errors.Wrap(errBadRequest, "invalid start time format")
+		}
+		query["timestamp"] = bson.M{"$gte": startTimestamp}
+	}
+
+	if endTime, ok := filter["endtime"].(string); ok && endTime != "" {
+		endTimestamp, err := strconv.ParseInt(endTime, 10, 64)
+		if err != nil {
+			return nil, errors.Wrap(errBadRequest, "invalid end time format")
+		}
+		if _, exists := query["timestamp"]; exists {
+			query["timestamp"].(bson.M)["$lte"] = endTimestamp
 		} else {
-			query["metadata."+k] = v
+			query["timestamp"] = bson.M{"$lte": endTimestamp}
 		}
 	}
 
-	// Add time range if either start or end time is present
-	if len(timeRange) > 0 {
-		query["timestamp"] = timeRange
+	// Set up options for sorting and limiting
+	opts := options.Find()
+	opts.SetSort(bson.D{{Key: "timestamp", Value: -1}}) // Sort by timestamp in descending order
+
+	// Handle recent parameter
+	if recent, ok := filter["recent"].(string); ok && recent != "" {
+		limit, err := strconv.ParseInt(recent, 10, 64)
+		if err != nil {
+			return nil, errors.Wrap(errBadRequest, "invalid recent value")
+		}
+		opts.SetLimit(limit)
 	}
 
-	// Set up options for sorting by timestamp in descending order and limit
-	opts := options.Find().
-		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
-		SetLimit(limit)
-
+	// Execute query
 	cursor, err := collection.Find(ctx, query, opts)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to find log entries")
+		return nil, errors.Wrap(err, "failed to query logs")
 	}
 	defer cursor.Close(ctx)
 
-	var entries []LogEntry
-	if err := cursor.All(ctx, &entries); err != nil {
-		return nil, errors.Wrap(err, "failed to decode log entries")
+	var logs []LogEntry
+	if err := cursor.All(ctx, &logs); err != nil {
+		return nil, errors.Wrap(err, "failed to decode logs")
 	}
 
-	return entries, nil
+	return logs, nil
 }
 
 func (s *mongoService) Close(ctx context.Context) error {
@@ -147,10 +161,17 @@ func (s *mongoService) Delete(ctx context.Context, filter map[string]interface{}
 		if err != nil {
 			return errors.Wrap(errBadRequest, "invalid epoch timestamp format")
 		}
-		_, err = collection.DeleteMany(ctx, bson.M{"timestamp": bson.M{"$lt": timestamp}})
+
+		// Delete all documents with timestamp less than the specified time
+		result, err := collection.DeleteMany(ctx, bson.M{"timestamp": bson.M{"$lt": timestamp}})
 		if err != nil {
 			return errors.Wrap(err, "failed to delete log entries")
 		}
+
+		if result.DeletedCount == 0 {
+			return errors.Wrap(errBadRequest, "no logs found before the specified timestamp")
+		}
+
 		return nil
 	}
 

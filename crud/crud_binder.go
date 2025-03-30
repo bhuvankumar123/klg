@@ -33,7 +33,7 @@ func (b *Binder) Bind(ht *http.Transport, opts ...http.HandlerOption) {
 	)
 
 	ht.DELETE(
-		"/v1.0/logs/:id",
+		"/v1.0/logs",
 		NewDeleteHandler(b.service),
 		append(opts, NewDeleteHandlerOption()...)...,
 	)

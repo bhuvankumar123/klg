@@ -211,21 +211,13 @@ func deleteDecoder(
 	// Get query parameters
 	query := req.URL.Query()
 
-	// Add level filter if present
+	// Add id or before filter if present
 	if id := query.Get("id"); id != "" {
 		filter["id"] = id
-	}
-
-	if before := query.Get("before"); before != "" {
+	} else if before := query.Get("before"); before != "" {
 		filter["before"] = before
-	}
-
-	if filter["id"] == "" || filter["before"] == "" {
-		return nil, errors.Wrap(errBadRequest, "id and before missing from url params")
-	}
-
-	if filter["id"] != "" && filter["before"] != "" {
-		return nil, errors.Wrap(errBadRequest, "only one of id or before can be provided")
+	} else {
+		return nil, errors.Wrap(errBadRequest, "either id or before must be provided")
 	}
 
 	return filter, nil
