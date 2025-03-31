@@ -1,6 +1,6 @@
 module github.com/bhuvankumar123/klg
 
-go 1.21
+go 1.19
 
 require (
 	github.com/go-kit/kit v0.13.0

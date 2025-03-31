@@ -6,11 +6,10 @@ This project is a simple log aggregator that allows users to ingest, retrieve, a
 
 ## Features
 
-- **Log Ingestion**: Push logs with structured data, including levels, messages, and metadata.
+- **Log Ingestion**: Push logs with structured data, including levels, messages, and metadata. Run the ingest.sh file to push logs
 - **Retrieve Logs by ID**: Fetch logs using their unique identifier.
 - **Filter Logs**: Query logs based on various parameters like level, message, timestamps, and metadata.
 - **Delete Logs**: Remove logs before a specific timestamp or by ID.
-- **Ingestion Script**: Run the ingest.sh file in scripts to populate your mongodb
 
 ## API Endpoints
 
