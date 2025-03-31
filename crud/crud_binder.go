@@ -18,20 +18,20 @@ func (b *Binder) Bind(ht *http.Transport, opts ...http.HandlerOption) {
 		append(opts, NewCreateHandlerOption()...)...,
 	)
 
-	// Get Call to fetch
+	// Get Call to fetch log based on id
 	ht.GET(
 		"/v1.0/logs/:id",
 		NewGetHandler(b.service),
 		append(opts, NewGetHandlerOption()...)...,
 	)
 
-	// Get call
+	// Get call to fetch list of logs bassed on params
 	ht.GET(
 		"/v1.0/logs",
 		NewListHandler(b.service),
 		append(opts, NewListHandlerOption()...)...,
 	)
-
+	// Delete Call to Delete logs based on params
 	ht.DELETE(
 		"/v1.0/logs",
 		NewDeleteHandler(b.service),
